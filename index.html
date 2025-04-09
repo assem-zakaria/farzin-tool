@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SVG Color & Texture Filler</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    #svg-container {
+      margin-top: 20px;
+      border: 1px solid #ccc;
+      padding: 10px;
+      display: inline-block;
+    }
+    .panel {
+      margin-top: 20px;
+    }
+    .hidden {
+      display: none;
+    }
+    #temp-style-container {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Upload SVG → Click Part → Color or Texture It!</h2>
+
+<input type="file" id="svgUpload" accept=".svg">
+
+<div id="svg-container"></div>
+
+<!-- Used for extracting computed styles -->
+<div id="temp-style-container"></div>
+
+<div class="panel hidden" id="colorPanel">
+  <label for="colorPicker">Pick a Color:</label>
+  <input type="color" id="colorPicker">
+  <button id="applyColor">Apply</button>
+</div>
+
+<div class="panel hidden" id="texturePanel">
+  <label for="textureUpload">Upload Texture:</label>
+  <input type="file" id="textureUpload" accept="image/*">
+  <button id="applyTexture">Apply Texture</button>
+</div>
+
+<button id="downloadBtn" class="hidden">Download PNG</button>
+
+<script>
+  const svgUpload = document.getElementById('svgUpload');
+  const svgContainer = document.getElementById('svg-container');
+  const colorPanel = document.getElementById('colorPanel');
+  const texturePanel = document.getElementById('texturePanel');
+  const colorPicker = document.getElementById('colorPicker');
+  const applyColor = document.getElementById('applyColor');
+  const textureUpload = document.getElementById('textureUpload');
+  const applyTexture = document.getElementById('applyTexture');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const tempStyleContainer = document.getElementById('temp-style-container');
+
+  let selectedElement = null;
+  let textureImageDataURL = null;
+
+  function rgbToHex(rgb) {
+    if (!rgb || !rgb.startsWith("rgb")) return '#000000';
+    const nums = rgb.match(/\d+/g).map(Number);
+    return "#" + nums.map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  function onElementSelected(shape) {
+    selectedElement = shape;
+    colorPanel.classList.remove('hidden');
+    texturePanel.classList.remove('hidden');
+    const fill = shape.getAttribute('fill') || window.getComputedStyle(shape).fill;
+    colorPicker.value = rgbToHex(fill);
+  }
+
+  svgUpload.addEventListener('change', function () {
+    const file = this.files[0];
+    if (file && file.type === 'image/svg+xml') {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const parser = new DOMParser();
+        const svgDoc = parser.parseFromString(e.target.result, "image/svg+xml");
+        const svg = svgDoc.querySelector('svg');
+        svg.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+        svg.style.width = "500px";
+        svg.style.height = "auto";
+
+        // Append temporarily to DOM for computed style to work
+        tempStyleContainer.innerHTML = '';
+        tempStyleContainer.appendChild(svg);
+
+        // Now we can compute real fill values
+        const shapes = svg.querySelectorAll('path, rect, circle, polygon, polyline, ellipse');
+        shapes.forEach(shape => {
+          const computedStyle = window.getComputedStyle(shape);
+          const computedFill = computedStyle.fill;
+
+          if (computedFill && computedFill !== 'none' && !computedFill.startsWith('url(')) {
+            shape.setAttribute('fill', computedFill);
+          }
+
+          shape.removeAttribute('class');
+          shape.style.cursor = 'pointer';
+          shape.addEventListener('click', () => onElementSelected(shape));
+        });
+
+        // Move to visible container
+        svgContainer.innerHTML = '';
+        svgContainer.appendChild(svg);
+        downloadBtn.classList.remove('hidden');
+      };
+      reader.readAsText(file);
+    }
+  });
+
+  applyColor.addEventListener('click', () => {
+    if (selectedElement) {
+      selectedElement.setAttribute('fill', colorPicker.value);
+      selectedElement = null;
+      colorPanel.classList.add('hidden');
+      texturePanel.classList.add('hidden');
+    }
+  });
+
+  textureUpload.addEventListener('change', function () {
+    const file = this.files[0];
+    if (file && file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        textureImageDataURL = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+
+  applyTexture.addEventListener('click', () => {
+    if (selectedElement && textureImageDataURL) {
+      const textureImg = new Image();
+
+      textureImg.onload = () => {
+        const svg = svgContainer.querySelector('svg');
+        const defs = svg.querySelector('defs') || svg.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "defs"), svg.firstChild);
+
+        const patternId = "texturePattern-" + Date.now();
+
+        const pattern = document.createElementNS("http://www.w3.org/2000/svg", "pattern");
+        pattern.setAttribute("id", patternId);
+        pattern.setAttribute("patternUnits", "userSpaceOnUse");
+        pattern.setAttribute("width", textureImg.width);
+        pattern.setAttribute("height", textureImg.height);
+
+        const image = document.createElementNS("http://www.w3.org/2000/svg", "image");
+        image.setAttributeNS("http://www.w3.org/1999/xlink", "href", textureImageDataURL);
+        image.setAttribute("x", "0");
+        image.setAttribute("y", "0");
+        image.setAttribute("width", textureImg.width);
+        image.setAttribute("height", textureImg.height);
+        image.setAttribute("preserveAspectRatio", "none");
+
+        pattern.appendChild(image);
+        defs.appendChild(pattern);
+
+        selectedElement.removeAttribute('fill'); // remove color
+        selectedElement.setAttribute("fill", `url(#${patternId})`);
+
+        selectedElement = null;
+        colorPanel.classList.add('hidden');
+        texturePanel.classList.add('hidden');
+      };
+
+      textureImg.onerror = () => {
+        console.error("Failed to load texture image.");
+      };
+
+      textureImg.src = textureImageDataURL;
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    const svg = svgContainer.querySelector('svg');
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.onload = () => {
+      let originalWidth = img.width;
+      let originalHeight = img.height;
+
+      let targetWidth = Math.max(1000, originalWidth);
+      let scale = targetWidth / originalWidth;
+      let targetHeight = originalHeight * scale;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+      const pngData = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = pngData;
+      link.download = 'colored-artwork.png';
+      link.click();
+
+      URL.revokeObjectURL(url);
+    };
+
+    img.src = url;
+  });
+</script>
+
+</body>
+</html>
